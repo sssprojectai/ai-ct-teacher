@@ -4,7 +4,7 @@
  *   GitHub Pages frontend  -->  this Worker  -->  Gemini API
  *
  * Routes:  GET /api/health   tells the frontend whether the Gemini key is set
- *          POST /api/ai      the 6C Consult stage and the free AI Chat page
+ *          POST /api/ai      the 4C final feedback (mode evaluate) and the free AI Chat page
  *
  * The Gemini key (GEMINI_API_KEY) lives only as a Worker secret. It is never sent to the browser,
  * never stored in localStorage or GitHub, and students never enter it.

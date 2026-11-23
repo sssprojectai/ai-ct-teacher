@@ -4,10 +4,10 @@
  */
 import { json, readJson, rateLimit } from './common.js';
 
-/* Model names change quickly. Read from Google's model page on 2026-10-01: Gemini 3.8 Flash is the recommended stable Flash model,
-   and Gemini 2.5 Flash is scheduled for shutdown (announced for 2026-10-16). If a model answers 404 (not found / retired) the next one is tried.
-   You can put your own first choice in the GEMINI_MODEL variable. These names have NOT been executed against a live key by the package author. */
-const DEFAULT_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-flash-latest'];
+/* Model order. The GEMINI_MODEL variable (Cloudflare dashboard) is always tried first.
+   The defaults below are models listed on the project's Gemini rate-limit page (Nov 2026); the Flash-Lite models have
+   the larger free daily quota. If a model answers 404 (not found / retired) the next one is tried. */
+const DEFAULT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3.6-flash'];
 /* Statuses that mean "this attempt failed, but the model may be fine": retry the SAME model briefly, then move on. */
 const TRANSIENT = [429, 500, 502, 503, 504];
 /* Any other status (400, 403, 404 ...) means this model name is not usable with this key: go straight to the next model. */
@@ -19,7 +19,8 @@ const MAX_INPUT_CHARS = 4000;
 const MAX_OUTPUT_TOKENS = 4096;   // roomy on purpose: newer Gemini models may spend part of the budget on thinking
 const RATE_LIMIT_PER_MINUTE = 8;
 const UPSTREAM_TIMEOUT_MS = 15000;
-const SIX_C_STAGES = ['context', 'consult', 'critique', 'check', 'challenge', 'conclude'];
+/* Stage names accepted from the app: the 4C stages, plus the older 6C names so that older clients keep working. */
+const STAGES_OK = ['contextualize', 'consult', 'critique', 'construct', 'context', 'check', 'challenge', 'conclude'];
 
 /* Official structured output: generationConfig.responseMimeType + responseSchema (OpenAPI-style subset). */
 const RESPONSE_SCHEMA = {
@@ -45,6 +46,56 @@ Rules for every response:
 - Use clear, simple English suitable for university students who are non-native speakers studying English teacher education.
 - Be concrete and specific to the scenario. Avoid generic advice.
 - Reply with the JSON object requested by the user message and nothing else.`;
+
+/* Final feedback at the end of a 4C task (mode: 'evaluate'). Criteria: five of the six core critical-thinking skills
+   in the Delphi Report (Facione, 1990). Scores are a learning aid, not a validated measurement. */
+const EVAL_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    scores: { type: 'OBJECT', properties: { analysis: { type: 'INTEGER' }, evaluation: { type: 'INTEGER' }, inference: { type: 'INTEGER' }, explanation: { type: 'INTEGER' }, self: { type: 'INTEGER' } },
+      required: ['analysis', 'evaluation', 'inference', 'explanation', 'self'] },
+    overall: { type: 'INTEGER' },
+    start: { type: 'STRING' }, end: { type: 'STRING' }, change: { type: 'STRING' },
+    useful: { type: 'STRING', enum: ['yes', 'partly', 'no'] }, useful_reason: { type: 'STRING' },
+    conclusion: { type: 'STRING' }, next_step: { type: 'STRING' },
+  },
+  required: ['scores', 'overall', 'start', 'end', 'change', 'useful', 'useful_reason', 'conclusion', 'next_step'],
+};
+const EVAL_SYSTEM_PROMPT = `You assess the critical thinking of a future English teacher (a university student, non-native speaker of English) who has just finished one task in AI-CT TEACHER.
+In the task the student: (1) read a classroom situation from Uzbekistan, chose the main problem and wrote a first opinion; (2) read a prepared AI suggestion; (3) said whether they agree with it, explained why and could open published research for each AI statement; (4) wrote a final solution and said how their opinion changed.
+Score five critical-thinking skills from the Delphi Report (Facione, 1990), each from 1 to 5:
+- analysis: sees the real problem and its causes in the situation;
+- evaluation: judges which AI statements are supported and which are not, with reasons;
+- inference: draws conclusions that follow from the evidence that was checked;
+- explanation: gives a clear, justified final solution;
+- self: self-regulation, compares the first and final opinion and notices what changed and why.
+Scale: 1 beginning, 2 emerging, 3 developing, 4 proficient, 5 advanced. "overall" is your holistic level from 1 to 5.
+Rules:
+- Base every judgement only on what the student wrote. Do not reward length alone. Do not invent anything the student did not write.
+- A changed opinion is not automatically better; reward change that is justified by evidence, and also reward a first opinion that was already well supported.
+- "start" and "end": one sentence each, summarising the student's first opinion and final solution.
+- "change": one or two sentences on what changed in the student's thinking and why.
+- "useful": yes, partly or no, with "useful_reason" in one sentence.
+- "conclusion": 2 to 4 short sentences of honest, kind and specific feedback.
+- "next_step": one concrete thing to do next time.
+- Use simple, clear English. Never invent a citation, study, statistic, author or URL.
+- Reply with the JSON object requested and nothing else.`;
+function buildEvalMessage(scenario, work) {
+  return ['CLASSROOM SITUATION: ' + scenario, '', "THE STUDENT'S WORK:", work, '', 'Reply with ONLY a JSON object shaped exactly like this:', JSON.stringify({
+    scores: { analysis: 3, evaluation: 3, inference: 3, explanation: 3, self: 3 }, overall: 3,
+    start: 'one sentence', end: 'one sentence', change: 'one or two sentences', useful: 'partly', useful_reason: 'one sentence',
+    conclusion: '2-4 short sentences', next_step: 'one sentence',
+  }, null, 2)].join('\n');
+}
+function parseEvalJSON(text) {
+  const cleaned = String(text).replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  try {
+    const o = JSON.parse(cleaned);
+    if (o && typeof o === 'object' && o.scores && typeof o.scores === 'object' && Number.isFinite(+o.overall)) return o;
+  } catch { /* fall through */ }
+  return null;
+}
+const clamp5 = v => Math.max(1, Math.min(5, Math.round(+v) || 1));
 
 /* The free "AI Chat" page (mode: 'chat'): a normal, honest assistant. It is NOT the 6C Consult prompt above, which makes the AI fallible on purpose. */
 const CHAT_SYSTEM_PROMPT = `You are a friendly, knowledgeable assistant for university students who are future English teachers. Many are non-native speakers of English and many write in Uzbek.
@@ -89,11 +140,13 @@ export async function handleAI(request, env, cors) {
   if (!body) return json({ error: 'invalid_json' }, 400, cors);
 
   const isChat = body.mode === 'chat';
+  const isEval = body.mode === 'evaluate';
   const { stage, studentResponse } = body;
   const scenario = typeof body.scenario === 'string' && body.scenario.trim() ? body.scenario : (isChat ? 'General chat' : body.scenario);
   const student = typeof studentResponse === 'string' ? studentResponse : '';
   if (typeof scenario !== 'string' || !scenario.trim()) return json({ error: 'invalid_input', detail: 'scenario is required' }, 400, cors);
-  if (!isChat && !SIX_C_STAGES.includes(stage)) return json({ error: 'invalid_input', detail: 'stage must be one of the six 6C stages' }, 400, cors);
+  if (!isChat && !isEval && !STAGES_OK.includes(stage)) return json({ error: 'invalid_input', detail: 'unknown stage' }, 400, cors);
+  if (isEval && !student.trim()) return json({ error: 'invalid_input', detail: 'the student work is required' }, 400, cors);
   if (isChat && !student.trim()) return json({ error: 'invalid_input', detail: 'a message is required' }, 400, cors);
   if (scenario.length > MAX_INPUT_CHARS || student.length > MAX_INPUT_CHARS) return json({ error: 'input_too_long', detail: 'max ' + MAX_INPUT_CHARS + ' characters' }, 400, cors);
   if (!env || !env.GEMINI_API_KEY) return json({ error: 'server_not_configured' }, 500, cors);
@@ -101,12 +154,12 @@ export async function handleAI(request, env, cors) {
   const custom = (env.GEMINI_MODEL && /^[a-z0-9.\-]+$/i.test(env.GEMINI_MODEL)) ? [env.GEMINI_MODEL] : [];
   const models = custom.concat(DEFAULT_MODELS.filter(m => !custom.includes(m))).slice(0, 5);
   const payload = (model) => {
-    const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: 0.7, responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA };
+    const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: isEval ? 0.3 : 0.7, responseMimeType: 'application/json', responseSchema: isEval ? EVAL_SCHEMA : RESPONSE_SCHEMA };
     // Gemini 2.5 Flash "thinks" by default and thinking tokens count against the output budget, which can truncate the JSON.
     if (/flash/i.test(model) && /2\.5/.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
     return JSON.stringify({
-      systemInstruction: { parts: [{ text: isChat ? CHAT_SYSTEM_PROMPT : SYSTEM_PROMPT }] },
-      contents: [{ role: 'user', parts: [{ text: isChat ? buildChatMessage(student) : buildUserMessage(scenario, stage, student) }] }],
+      systemInstruction: { parts: [{ text: isEval ? EVAL_SYSTEM_PROMPT : isChat ? CHAT_SYSTEM_PROMPT : SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: isEval ? buildEvalMessage(scenario, student) : isChat ? buildChatMessage(student) : buildUserMessage(scenario, stage, student) }] }],
       generationConfig,
     });
   };
@@ -159,6 +212,19 @@ export async function handleAI(request, env, cors) {
   try { data = await upstream.json(); } catch { return json({ error: 'upstream_invalid_response' }, 502, cors); }
   const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
   const text = Array.isArray(parts) ? parts.map(p => (p && typeof p.text === 'string' ? p.text : '')).join('').trim() : '';
+  if (isEval) {
+    const e = parseEvalJSON(text);
+    if (!e) return json({ error: 'malformed_model_output' }, 502, cors);
+    const sc = e.scores;
+    const evaluation = {
+      scores: { analysis: clamp5(sc.analysis), evaluation: clamp5(sc.evaluation), inference: clamp5(sc.inference), explanation: clamp5(sc.explanation), self: clamp5(sc.self) },
+      overall: clamp5(e.overall),
+      start: safeString(e.start, 500), end: safeString(e.end, 500), change: safeString(e.change, 600),
+      useful: ['yes', 'partly', 'no'].includes(e.useful) ? e.useful : 'partly', useful_reason: safeString(e.useful_reason, 400),
+      conclusion: safeString(e.conclusion, 900), next_step: safeString(e.next_step, 400),
+    };
+    return json({ evaluation, response: evaluation.conclusion }, 200, cors);
+  }
   const parsed = parseModelJSON(text);
   if (!parsed) return json({ error: 'malformed_model_output' }, 502, cors);
 
