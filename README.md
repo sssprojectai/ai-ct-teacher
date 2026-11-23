@@ -22,22 +22,23 @@ There is **one** backend address, set in one place: `const API_BASE='https://ai-
 
 ## What the platform is
 
-An electronic methodological prototype that develops future English teachers' critical thinking by treating AI as an **object of critical analysis**: the student thinks first, consults AI, then examines, checks and challenges its answer, and records an accountable decision with a short reflection. The interface is in **English**; short Uzbek notes appear only as smaller support text.
+An electronic methodological prototype that develops future English teachers' critical thinking by treating AI as an **object of critical analysis**: the student thinks first, reads an AI suggestion, checks every statement against published research, and makes an accountable decision. The interface is in **English**; short Uzbek notes appear only as smaller support text.
 
-### The AI-CT 6C cycle (exactly six stages)
+### The AI-CT 4C cycle (Think → Ask AI → Check → Decide)
 
-1. **Context** – read the situation and think for yourself. No AI.
-2. **Consult** – talk with the AI about the situation (the only AI stage of the cycle).
-3. **Critique** – mark the parts that are convincing, questionable or worth checking.
-4. **Check** – say where you would verify each claim and give a verdict.
-5. **Challenge** – improve the suggestion and name its risk.
-6. **Conclude** – accept, modify or reject; explain; say what you learned. Reflection is the closing part of this stage; there is no seventh stage.
+1. **Contextualize (Think)** – read a real classroom situation from Uzbekistan, choose the main problem, write a first opinion.
+2. **Consult (Ask AI)** – read a prepared AI suggestion (six statements; some supported by research, some not).
+3. **Critique (Check)** – agree, partly agree or disagree; explain why; if a source is needed, open the Source Library entry for every statement.
+4. **Construct (Decide)** – write the final solution and compare it with the first opinion.
+
+At the end, Gemini (through the Worker, `mode: "evaluate"`) gives feedback from 1 to 5 on five critical-thinking skills after Facione (1990), with a short conclusion. If the AI is not available, a clearly labelled automatic estimate is shown.
 
 ### What is in the app
 
-- **Task library:** 80 tasks in 8 categories (10 in each), each worked through the 6C cycle, with instant feedback and stage-by-stage indicators (level 1–4 per stage, total 6–24; learning-activity indicators, not a validated test).
-- **AI Chat:** a free, general conversation with Gemini about English, grammar, teaching or studies. It is separate from the 6C Consult stage and is not scored.
-- **Method Challenge** (75 questions) and **Team Competition** (156 questions; 5, 10 or 20 questions per team; 1–4 teams; 40-second timer).
+- **Tasks:** 100 real classroom situations in one list (search, “Today’s task”), each worked through the 4C cycle in about 5 minutes.
+- **Source Library:** 67 published works (method/theory, author, year, full reference, main idea); every AI statement in every task links to them.
+- **AI Chat:** a free, general conversation with Gemini about English, grammar, teaching or studies. Not scored.
+- **Team Competition** (5, 10 or 20 questions per team; 1–4 teams; 40-second timer).
 - **My progress:** profile (a name stored on the device), XP, streak, badges, history of records, JSON/CSV export.
 - Projector mode and full screen for interactive whiteboards, light and dark themes, sound with a visible switch.
 
